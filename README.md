@@ -10,8 +10,9 @@ Junta feeds RSS de fontes para desenvolvedores (projetos em alta no GitHub, Show
 - **Por que é relevante:** cada item mostra os termos da stack que ele cita (ex.: `IA p/ código · Node.js · MCP`).
 - **Filtros:** categoria (IA, GitHub, Ferramentas, JS/TS, DevOps, Arquitetura, Banco de dados, Segurança, Linux…), fonte e busca por palavra-chave, que ignora acentos.
 - **Resumo sob demanda:** clicar na linha abre o resumo, com os botões *Ler matéria completa* / *Abrir no GitHub* e **Copiar para o time**, que copia título, termos, resumo e link prontos para colar no chat.
+- **Favoritos:** a ☆ de cada item (ou a tecla `F`) guarda uma cópia completa dele. O filtro **★ Favoritos** mostra o que você salvou, mesmo depois que o item sai do feed. Os favoritos ficam no navegador (`localStorage`), separados por endereço da página. Os botões *Exportar* e *Importar* (JSON) servem para levar de uma máquina a outra ou fazer backup.
 - Itens já lidos ficam esmaecidos.
-- **Teclado:** `J`/`K` navegam, `Enter` abre e fecha, `O` abre o link, `C` copia, `/` busca.
+- **Teclado:** `J`/`K` navegam, `Enter` abre e fecha, `O` abre o link, `C` copia, `F` favorita, `/` busca.
 
 ## Instalação (Linux)
 

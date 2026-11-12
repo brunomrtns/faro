@@ -580,6 +580,15 @@ MODELO_HTML = r"""<!doctype html>
            padding:8px 16px; border-radius:8px; font-weight:600; opacity:0; transition:opacity .2s; pointer-events:none; }
   #aviso.visivel { opacity:1; }
 
+  /* Favoritos */
+  .fav { flex:none; align-self:center; background:none; border:0; cursor:pointer; font-size:24px; line-height:1;
+         color:var(--sub); padding:4px 6px; border-radius:6px; }
+  .fav:hover { color:var(--ouro); background:var(--card); }
+  .fav.ativo { color:var(--ouro); }
+  .salvo { color:var(--ouro); font-size:12.5px; }
+  .barra-fav { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-top:22px; color:var(--sub); font-size:13px; }
+  .barra-fav .botao { padding:6px 12px; font-size:13px; }
+
   @media (max-width:700px) {
     .cabeca { flex-direction:column; }
     .capa { width:100%; }
@@ -604,7 +613,7 @@ MODELO_HTML = r"""<!doctype html>
 <main>
   <div id="lista"></div>
   <p class="dica"><kbd>J</kbd> <kbd>K</kbd> próximo / anterior · <kbd>Enter</kbd> abre/fecha ·
-     <kbd>O</kbd> abre o link · <kbd>C</kbd> copia para o time · <kbd>/</kbd> busca</p>
+     <kbd>O</kbd> abre o link · <kbd>C</kbd> copia para o time · <kbd>F</kbd> favorita · <kbd>/</kbd> busca</p>
 </main>
 <div id="aviso"></div>
 
@@ -647,9 +656,28 @@ const LIDOS = 'tech-news-lidos';
 const lidos = new Set(JSON.parse(localStorage.getItem(LIDOS) || '[]'));
 let categoria = '', visiveis = [], atual = -1;
 
-noticias.forEach(n => {
+const prepararBusca = n => {
   n.busca = semAcento([n.titulo, n.titulo_original, n.resumo, n.fonte, n.categoria, ...n.rotulos].join(' ').toLowerCase());
-});
+};
+noticias.forEach(prepararBusca);
+
+// Favoritos: cópia completa de cada item, para continuar existindo depois que ele sai do feed.
+// Ficam no navegador (localStorage), por endereço da página; exportar/importar move entre máquinas.
+const FAVS = 'faro-favoritos';
+const CAMPOS_FAV = ['titulo', 'titulo_original', 'resumo', 'link', 'imagem', 'fonte', 'categoria',
+                    'nota', 'rotulos', 'github', 'selo', 'ts', 'salvoEm'];
+const chave = n => n.link || n.titulo;
+const copiaFav = n => Object.fromEntries(CAMPOS_FAV.map(c => [c, n[c]]));
+const favoritos = new Map();
+try {
+  JSON.parse(localStorage.getItem(FAVS) || '[]').forEach(f => favoritos.set(chave(f), f));
+} catch { /* favoritos corrompidos: começa vazio */ }
+let chipFav = null;
+
+function gravarFavoritos() {
+  localStorage.setItem(FAVS, JSON.stringify([...favoritos.values()].map(copiaFav)));
+  if (chipFav) chipFav.children[2].textContent = favoritos.size;
+}
 
 // ---------- Chips: Todas, Destaques e categorias ----------
 function criarChip(cat, rotulo, qtd, cor) {
@@ -665,11 +693,13 @@ function criarChip(cat, rotulo, qtd, cor) {
     renderizar();
   });
   $('chips').appendChild(b);
+  return b;
 }
 const porCat = {};
 noticias.forEach(n => porCat[n.categoria] = (porCat[n.categoria] || 0) + 1);
 criarChip('', 'Todas', noticias.length);
 criarChip('*', '⭐ Destaques', noticias.filter(n => n.nota >= notaDestaque).length, 'var(--ouro)');
+chipFav = criarChip('fav', '★ Favoritos', favoritos.size, 'var(--ouro)');
 Object.entries(porCat).sort((a, b) => b[1] - a[1]).forEach(([c, q]) => criarChip(c, c, q, COR(c)));
 const status = document.createElement('span');
 status.className = 'status';
@@ -723,6 +753,7 @@ function criarLinha(n, indice) {
         <p class="previa"></p>
         <div class="rotulos"></div>
       </div>
+      <button class="fav" title="Favoritar (F)" aria-label="Favoritar">☆</button>
       <span class="seta">⌄</span>
     </div>
     <div class="detalhe">
@@ -745,6 +776,13 @@ function criarLinha(n, indice) {
     s.textContent = '⭐ destaque';
     item.querySelector('.meta').appendChild(s);
   }
+  const fav = favoritos.get(chave(n));
+  if (fav && categoria === 'fav') {
+    const s = document.createElement('span');
+    s.className = 'salvo';
+    s.textContent = '★ salvo ' + (horario(fav.salvoEm / 1000) || 'agora');
+    item.querySelector('.meta').appendChild(s);
+  }
   item.querySelector('h3').textContent = n.titulo;
   item.querySelector('.previa').textContent = n.resumo;
   const rot = item.querySelector('.rotulos');
@@ -762,8 +800,76 @@ function criarLinha(n, indice) {
   cabeca.addEventListener('focus', () => atual = indice);
   item.querySelector('.recolher').addEventListener('click', () => alternar(indice));
   item.querySelector('.copiar').addEventListener('click', () => copiar(indice));
+  const botaoFav = item.querySelector('.fav');
+  pintarFav(botaoFav, !!fav);
+  botaoFav.addEventListener('click', ev => {
+    ev.stopPropagation();  // não abre/fecha o resumo
+    alternarFavorito(indice);
+  });
   n.el = item;
   return item;
+}
+
+function pintarFav(botao, ativo) {
+  botao.classList.toggle('ativo', ativo);
+  botao.textContent = ativo ? '★' : '☆';
+  botao.title = ativo ? 'Tirar dos favoritos (F)' : 'Favoritar (F)';
+}
+
+function alternarFavorito(i) {
+  const n = visiveis[i];
+  if (!n) return;
+  const k = chave(n);
+  if (favoritos.has(k)) {
+    favoritos.delete(k);
+    avisar('Removido dos favoritos');
+  } else {
+    favoritos.set(k, copiaFav({ ...n, salvoEm: Date.now() }));
+    avisar('Salvo nos favoritos ★');
+  }
+  gravarFavoritos();
+  pintarFav(n.el.querySelector('.fav'), favoritos.has(k));
+}
+
+// ---------- Exportar / importar favoritos ----------
+function exportarFavoritos() {
+  const blob = new Blob([JSON.stringify([...favoritos.values()].map(copiaFav), null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `faro-favoritos-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function importarFavoritos(arquivo) {
+  arquivo.text().then(texto => {
+    const lista = JSON.parse(texto);
+    if (!Array.isArray(lista)) throw new Error();
+    let novos = 0;
+    lista.forEach(f => {
+      if (!f || typeof f.titulo !== 'string' || typeof f.link !== 'string') return;  // ignora o que não é favorito
+      f.rotulos = Array.isArray(f.rotulos) ? f.rotulos.map(String) : [];
+      f.salvoEm = Number(f.salvoEm) || Date.now();
+      if (!favoritos.has(chave(f))) novos++;
+      favoritos.set(chave(f), copiaFav(f));
+    });
+    gravarFavoritos();
+    renderizar();
+    avisar(`${novos} favoritos novos importados`);
+  }).catch(() => avisar('Arquivo inválido: use um JSON exportado pelo Faro'));
+}
+
+function barraFavoritos() {
+  const barra = document.createElement('div');
+  barra.className = 'barra-fav';
+  barra.innerHTML = '<span>Guardados neste navegador.</span>' +
+    '<button class="botao sec exportar">Exportar</button>' +
+    '<label class="botao sec">Importar<input type="file" accept="application/json,.json" hidden></label>';
+  barra.querySelector('.exportar').addEventListener('click', exportarFavoritos);
+  barra.querySelector('input').addEventListener('change', ev => {
+    if (ev.target.files[0]) importarFavoritos(ev.target.files[0]);
+  });
+  return barra;
 }
 
 // ---------- Lista: filtros, ordenação e agrupamento ----------
@@ -777,18 +883,38 @@ function renderizar() {
   const termos = semAcento($('busca').value.toLowerCase()).split(/\s+/).filter(Boolean);
   const fonte = $('fonte').value;
   const porRelevancia = $('ordem').value === 'relevancia';
-  visiveis = noticias.filter(n => (!categoria || (categoria === '*' ? n.nota >= notaDestaque : n.categoria === categoria))
-                               && (!fonte || n.fonte === fonte)
-                               && termos.every(t => n.busca.includes(t)));
-  visiveis.sort(porRelevancia ? (a, b) => b.nota - a.nota || b.ts - a.ts : (a, b) => b.ts - a.ts);
-
+  const verFavoritos = categoria === 'fav';
   const lista = $('lista');
   lista.textContent = '';
+
+  if (verFavoritos) {
+    // Usa a versão atual do item se ele ainda está no feed; senão, a cópia salva.
+    const atuais = new Map(noticias.map(n => [chave(n), n]));
+    visiveis = [...favoritos.values()].map(f => {
+      const n = atuais.get(chave(f)) || f;
+      if (!n.busca) prepararBusca(n);
+      n.salvoEm = f.salvoEm;
+      return n;
+    }).filter(n => (!fonte || n.fonte === fonte) && termos.every(t => n.busca.includes(t)));
+    visiveis.sort((a, b) => b.salvoEm - a.salvoEm);
+    lista.appendChild(barraFavoritos());
+  } else {
+    visiveis = noticias.filter(n => (!categoria || (categoria === '*' ? n.nota >= notaDestaque : n.categoria === categoria))
+                                 && (!fonte || n.fonte === fonte)
+                                 && termos.every(t => n.busca.includes(t)));
+    visiveis.sort(porRelevancia ? (a, b) => b.nota - a.nota || b.ts - a.ts : (a, b) => b.ts - a.ts);
+  }
+
   if (!visiveis.length) {
-    lista.innerHTML = '<p class="vazio-msg">Nada com esse filtro.</p>';
+    const p = document.createElement('p');
+    p.className = 'vazio-msg';
+    p.textContent = verFavoritos && !favoritos.size
+      ? 'Nenhum favorito ainda. Clique na ☆ de um item (ou tecle F) para guardá-lo aqui.'
+      : 'Nada com esse filtro.';
+    lista.appendChild(p);
     return;
   }
-  const grupoDe = porRelevancia ? faixa : n => nomeDoDia(n.ts);
+  const grupoDe = verFavoritos ? () => 'Seus favoritos' : porRelevancia ? faixa : n => nomeDoDia(n.ts);
   let grupoAtual = null;
   visiveis.forEach((n, i) => {
     const g = grupoDe(n);
@@ -883,6 +1009,7 @@ document.addEventListener('keydown', ev => {
   else if ((tecla === 'enter' || tecla === ' ') && document.activeElement.classList.contains('cabeca')) alternar(atual);
   else if (tecla === 'o' && visiveis[atual]) window.open(urlSegura(visiveis[atual].link), '_blank', 'noopener');
   else if (tecla === 'c' && visiveis[atual]) copiar(atual);
+  else if (tecla === 'f' && visiveis[atual]) alternarFavorito(atual);
   else return;
   ev.preventDefault();
 });
