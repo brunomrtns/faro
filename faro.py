@@ -33,6 +33,7 @@ import argparse
 import calendar
 import html
 import json
+import os
 import re
 import socket
 import sys
@@ -151,7 +152,8 @@ TIMEOUT_S = 15          # timeout de cada download de feed
 MAX_RESUMO = 600        # caracteres máximos do resumo exibido
 USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) faro/2.0 (+https://github.com/brunomrtns/faro)"
 
-DIR_CACHE = Path.home() / ".cache" / "tech-news"
+# FARO_CACHE_DIR permite trocar a pasta de cache (o instalador de servidor usa /var/cache/faro).
+DIR_CACHE = Path(os.environ.get("FARO_CACHE_DIR") or Path.home() / ".cache" / "tech-news")
 SAIDA_PADRAO = DIR_CACHE / "index.html"
 CACHE_OG = DIR_CACHE / "og-cache.json"          # imagens de capa já procuradas, por link
 TIMEOUT_OG_S = 6
@@ -845,7 +847,19 @@ function copiar(i) {
   if (!n) return;
   const resumo = n.resumo.length > 280 ? n.resumo.slice(0, 280).replace(/\s+\S*$/, '') + '…' : n.resumo;
   const texto = `*${n.titulo}*${n.rotulos.length ? ' (' + n.rotulos.join(', ') + ')' : ''}\n${resumo}\n${n.link}`;
-  navigator.clipboard.writeText(texto)
+  // navigator.clipboard só existe em https/localhost; servido por http, usa o método antigo.
+  const copiarAntigo = () => {
+    const area = document.createElement('textarea');
+    area.value = texto;
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.appendChild(area);
+    area.select();
+    const ok = document.execCommand('copy');
+    area.remove();
+    return ok ? Promise.resolve() : Promise.reject();
+  };
+  (navigator.clipboard ? navigator.clipboard.writeText(texto).catch(copiarAntigo) : copiarAntigo())
     .then(() => avisar('Copiado! Cole no chat do time.'))
     .catch(() => avisar('Não consegui copiar (permissão do navegador).'));
 }
@@ -925,8 +939,13 @@ def main() -> None:
         for t in tarefas:
             t.result()
 
+    # Grava num temporário e troca de uma vez: quem estiver servindo a página (nginx)
+    # nunca entrega um arquivo pela metade.
     args.out.parent.mkdir(parents=True, exist_ok=True)
-    args.out.write_text(gerar_html(noticias, erros), encoding="utf-8")
+    temporario = args.out.with_name(f".{args.out.name}.tmp")
+    temporario.write_text(gerar_html(noticias, erros), encoding="utf-8")
+    temporario.chmod(0o644)
+    os.replace(temporario, args.out)
     destaques = sum(1 for n in noticias if n["nota"] >= NOTA_DESTAQUE)
     print(f"{len(noticias)} itens ({destaques} destaques) em {time.time() - inicio:.1f}s → {args.out}")
 

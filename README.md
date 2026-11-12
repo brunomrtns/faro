@@ -59,6 +59,46 @@ Com `crontab -e`:
 0 * * * * $HOME/faro/.venv/bin/python $HOME/faro/faro.py --no-open
 ```
 
+## Instalação em servidor (nginx + systemd)
+
+Para deixar o Faro publicado para o time inteiro, numa máquina Linux com systemd. O nginx é opcional.
+
+```bash
+git clone https://github.com/brunomrtns/faro.git /opt/faro
+sudo /opt/faro/deploy/deploy.sh install
+```
+
+Ou, sem clonar antes:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/brunomrtns/faro/main/deploy/deploy.sh | sudo bash -s install
+```
+
+O `install`:
+
+- instala `git`, `python3` e `python3-venv` se faltarem, e cria o `.venv` em `/opt/faro`;
+- cria o usuário de sistema `faro` (sem login). A geração roda com ele, isolada pelo systemd: só escreve na pasta da página e no cache (`/var/cache/faro`);
+- cria `faro.service` e `faro.timer`, que geram `/var/lib/faro/www/index.html` de hora em hora;
+- publica em **`/faro/`** no nginx. Ele escreve `snippets/faro.conf` e acrescenta **uma linha** `include snippets/faro.conf;  # faro` em cada bloco `server` do site que é `default_server`, sem mexer no resto. Antes de recarregar, faz backup em `/var/backups/` e roda `nginx -t`; se o teste falhar, restaura o arquivo;
+- gera a primeira página na hora.
+
+Outros comandos: `deploy.sh update` (versão nova do repositório + reaplica tudo), `run` (gera agora), `status` e `uninstall`.
+
+> Se outro deploy reescrever o arquivo do site no nginx, o `include` some. O `deploy.sh status` avisa e o `deploy.sh update` coloca de volta.
+
+O script não guarda nenhum IP, senha ou nome de máquina. Tudo tem padrão e pode ser trocado por variável de ambiente:
+
+| Variável | Padrão |
+|---|---|
+| `FARO_URL_PATH` | `/faro` |
+| `FARO_AGENDA` | `hourly` (qualquer `OnCalendar` do systemd, ex.: `*:0/30`) |
+| `FARO_ARGS` | vazio (ex.: `"--max 30 --dias 14"`) |
+| `FARO_NGINX_SITE` | site com `default_server` (`nenhum` = não mexe no nginx) |
+| `FARO_DIR` / `FARO_WWW` / `FARO_USER` | `/opt/faro` / `/var/lib/faro/www` / `faro` |
+| `FARO_REPO` / `FARO_BRANCH` | este repositório / `main` |
+
+Exemplo: `sudo FARO_URL_PATH=/radar FARO_AGENDA='*:0/30' /opt/faro/deploy/deploy.sh install`
+
 ## Opções
 
 | Opção | O que faz |
@@ -86,5 +126,5 @@ Tudo fica no topo do `faro.py`:
 - **Projetos em alta no GitHub:** vêm do espelho em RSS [GitHubTrendingRSS](https://github.com/mshibanami/GitHubTrendingRSS). A imagem é o cartão de prévia do próprio GitHub.
 - **Imagens:** quando o feed não traz imagem, o Faro lê o começo da página e pega a `og:image`.
 - **Tradução:** usa a API pública e gratuita [translate-api-google-node-vercel](https://github.com/DIEGOHORVATTI/translate-api-google-node-vercel) (`translate-google-api-v1.vercel.app`), em lotes. Não é uma API oficial: se ela falhar, o item aparece no original e é traduzido numa próxima execução.
-- **Cache:** traduções e imagens ficam em `~/.cache/tech-news/`, então cada texto e cada página só são consultados uma vez.
+- **Cache:** traduções e imagens ficam em `~/.cache/tech-news/` (ou em `FARO_CACHE_DIR`), então cada texto e cada página só são consultados uma vez.
 - **Página:** um arquivo só, com HTML, CSS e JS embutidos e sem servidor. Os horários relativos ("há 2 h", "Hoje") são calculados ao abrir, então continuam certos mesmo horas depois. Todo texto dos feeds entra como texto, nunca como HTML.
