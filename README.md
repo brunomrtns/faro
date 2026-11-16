@@ -7,6 +7,8 @@ Junta feeds RSS de fontes para desenvolvedores (projetos em alta no GitHub, Show
 ## O que você vê
 
 - **Lista em linhas**, ordenada por relevância e dividida em três faixas: *Destaques para o time*, *Vale olhar* e *Outros*. Também dá para ver por data, agrupada por dia.
+- **Relevância que envelhece:** a nota do perfil do time perde 1 ponto por dia de idade (`PERDA_POR_DIA`). O muito relevante segura o topo por alguns dias e depois dá lugar ao novo. Repositório "em alta" no GitHub não tem data: a idade dele conta de quando entrou na lista.
+- **🆕 Novos desde a última visita:** o que apareceu nos feeds depois da sua visita anterior ganha o selo *novo* e um filtro próprio. Recarregar a página em menos de 30 min conta como a mesma visita.
 - **Por que é relevante:** cada item mostra os termos da stack que ele cita (ex.: `IA p/ código · Node.js · MCP`).
 - **Filtros:** categoria (IA, GitHub, Ferramentas, JS/TS, DevOps, Arquitetura, Banco de dados, Segurança, Linux…), fonte e busca por palavra-chave, que ignora acentos.
 - **Resumo sob demanda:** clicar na linha abre o resumo, com os botões *Ler matéria completa* / *Abrir no GitHub* e **Copiar para o time**, que copia título, termos, resumo e link prontos para colar no chat.
@@ -120,6 +122,7 @@ Tudo fica no topo do `faro.py`:
 - **`RUIDO`**: termos que derrubam a nota; item com nota negativa é descartado.
 - **`CATEGORIAS`**: regras dos filtros de assunto.
 - **`NOTA_DESTAQUE` / `NOTA_VALE_OLHAR`**: notas de corte das faixas.
+- **`PERDA_POR_DIA`**: quanto a relevância cai por dia de idade (0 desliga o envelhecimento).
 
 ## Como funciona
 

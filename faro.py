@@ -132,6 +132,7 @@ RUIDO = (r"deals?|discount|\d+% off|black (friday|november)|promo[cç][aã]o|des
 
 NOTA_DESTAQUE = 7    # a partir desta nota o item vai para "Destaques para o time"
 NOTA_VALE_OLHAR = 3  # entre esta e a de destaque: "Vale olhar"
+PERDA_POR_DIA = 1.0  # relevância que o item perde por dia de idade: o novo passa à frente do velho
 
 # Categorias de assunto (chips no topo). Ordem importa: a primeira que casar vence.
 CATEGORIAS = [
@@ -159,6 +160,7 @@ CACHE_OG = DIR_CACHE / "og-cache.json"          # imagens de capa já procuradas
 TIMEOUT_OG_S = 6
 BYTES_OG = 96_000       # as meta tags ficam no <head>: basta ler o começo da página
 CACHE_TRADUCAO = DIR_CACHE / "traducoes.json"   # traduções já feitas, por texto original
+CACHE_VISTO = DIR_CACHE / "vistos.json"          # quando cada link apareceu pela 1ª vez num feed
 # POST {"text", "from", "to"} -> string JSON com a tradução (preserva as quebras de linha).
 URL_TRADUTOR = "https://translate-google-api-v1.vercel.app/translate"
 TIMEOUT_TRADUCAO_S = 20
@@ -291,7 +293,7 @@ def baixar_feed(feed_cfg: dict, maximo: int, limite_ts: float) -> list:
     for e in feed.entries[:maximo]:
         if feed_cfg.get("github"):
             base = item_github(e)
-            ts = agora  # lista de "em alta" não tem data: vale o momento da coleta
+            ts = agora  # lista de "em alta" não tem data: coletar() troca pela 1ª vez em que o repo apareceu
         else:
             # Prefere o conteúdo completo quando o resumo vem vazio ou curtíssimo.
             bruto = e.get("summary", "")
@@ -350,8 +352,21 @@ def coletar(maximo: int, dias: int) -> tuple:
         chave = n["link"] or n["titulo"]
         if chave not in melhores or n["nota"] > melhores[chave]["nota"]:
             melhores[chave] = n
+    marcar_primeira_vez(melhores)
     unicas = sorted(melhores.values(), key=lambda n: n["ts"], reverse=True)
     return unicas, erros
+
+
+def marcar_primeira_vez(itens: dict) -> None:
+    """Grava em `visto` quando cada item apareceu pela 1ª vez (base do "novo desde a sua última visita").
+    Repo "em alta" não tem data: a idade dele passa a contar de quando entrou na lista, não da coleta."""
+    vistos = ler_cache(CACHE_VISTO)
+    agora = time.time()
+    for chave, n in itens.items():
+        n["visto"] = vistos.setdefault(chave, agora)
+        if n["github"]:
+            n["ts"] = n["visto"]
+    gravar_cache(CACHE_VISTO, {k: v for k, v in vistos.items() if k in itens})
 
 # ---------------------------------------------------------------------------
 # Imagem de capa (og:image) para itens sem imagem no feed
@@ -552,6 +567,7 @@ MODELO_HTML = r"""<!doctype html>
   .tag { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.05em;
          padding:2px 8px; border-radius:5px; color:#0d1014; background:var(--cor); }
   .estrela { color:var(--ouro); font-weight:700; font-size:12.5px; }
+  .novo { color:#0d1014; background:var(--destaque); font-weight:700; font-size:11px; padding:2px 7px; border-radius:5px; }
   .item h3 { margin:0; font-size:19px; line-height:1.3; font-weight:700; overflow-wrap:anywhere; }
   .previa { margin:0; color:#aeb8c4; font-size:14.5px; line-height:1.5;
             display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
@@ -619,7 +635,7 @@ MODELO_HTML = r"""<!doctype html>
 
 <script id="dados" type="application/json">__DADOS__</script>
 <script>
-const { noticias, gerado, erros, notaDestaque, notaValeOlhar } = JSON.parse(document.getElementById('dados').textContent);
+const { noticias, gerado, erros, notaDestaque, notaValeOlhar, perdaPorDia } = JSON.parse(document.getElementById('dados').textContent);
 const $ = id => document.getElementById(id);
 const semAcento = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 const COR = c => `var(--${semAcento(c).replace(/[^A-Za-z]/g, '')})`;  // "Banco de dados" -> --Bancodedados
@@ -656,8 +672,28 @@ const LIDOS = 'tech-news-lidos';
 const lidos = new Set(JSON.parse(localStorage.getItem(LIDOS) || '[]'));
 let categoria = '', visiveis = [], atual = -1;
 
+// Visitas: "novo" é o que apareceu depois da visita anterior. Recarregar a página em menos de
+// 30 min conta como a mesma visita, para os itens não deixarem de ser novos no F5.
+const VISITAS = 'faro-visitas';
+const NOVA_VISITA_S = 30 * 60;
+const agoraS = Date.now() / 1000;
+let visitas = {};
+try { visitas = JSON.parse(localStorage.getItem(VISITAS) || '{}'); } catch { /* corrompido: recomeça */ }
+if (!visitas.atual || agoraS - visitas.atual > NOVA_VISITA_S) visitas.anterior = visitas.atual || null;
+visitas.atual = agoraS;
+localStorage.setItem(VISITAS, JSON.stringify(visitas));
+
+// Relevância = nota do perfil do time menos a idade: o muito relevante segura o topo por alguns dias
+// e depois dá lugar ao novo. Sem data, a idade conta de quando o Faro viu o item pela 1ª vez.
+const relevancia = n => {
+  const idadeDias = Math.max(0, agoraS - (n.ts || n.visto || gerado)) / 86400;
+  return Math.round((n.nota - perdaPorDia * idadeDias) * 10) / 10;
+};
+
 const prepararBusca = n => {
   n.busca = semAcento([n.titulo, n.titulo_original, n.resumo, n.fonte, n.categoria, ...n.rotulos].join(' ').toLowerCase());
+  n.relevancia = relevancia(n);
+  n.novo = !!(visitas.anterior && n.visto && n.visto > visitas.anterior);
 };
 noticias.forEach(prepararBusca);
 
@@ -665,7 +701,7 @@ noticias.forEach(prepararBusca);
 // Ficam no navegador (localStorage), por endereço da página; exportar/importar move entre máquinas.
 const FAVS = 'faro-favoritos';
 const CAMPOS_FAV = ['titulo', 'titulo_original', 'resumo', 'link', 'imagem', 'fonte', 'categoria',
-                    'nota', 'rotulos', 'github', 'selo', 'ts', 'salvoEm'];
+                    'nota', 'rotulos', 'github', 'selo', 'ts', 'visto', 'salvoEm'];
 const chave = n => n.link || n.titulo;
 const copiaFav = n => Object.fromEntries(CAMPOS_FAV.map(c => [c, n[c]]));
 const favoritos = new Map();
@@ -698,7 +734,9 @@ function criarChip(cat, rotulo, qtd, cor) {
 const porCat = {};
 noticias.forEach(n => porCat[n.categoria] = (porCat[n.categoria] || 0) + 1);
 criarChip('', 'Todas', noticias.length);
-criarChip('*', '⭐ Destaques', noticias.filter(n => n.nota >= notaDestaque).length, 'var(--ouro)');
+const novos = noticias.filter(n => n.novo).length;
+if (novos) criarChip('novo', '🆕 Novos desde a última visita', novos, 'var(--destaque)');
+criarChip('*', '⭐ Destaques', noticias.filter(n => n.relevancia >= notaDestaque).length, 'var(--ouro)');
 chipFav = criarChip('fav', '★ Favoritos', favoritos.size, 'var(--ouro)');
 Object.entries(porCat).sort((a, b) => b[1] - a[1]).forEach(([c, q]) => criarChip(c, c, q, COR(c)));
 const status = document.createElement('span');
@@ -770,7 +808,13 @@ function criarLinha(n, indice) {
   item.querySelector('.tag').textContent = n.categoria;
   item.querySelector('.fonte').textContent = n.fonte;
   item.querySelector('time').textContent = n.selo || horario(n.ts) || 'sem data';
-  if (n.nota >= notaDestaque) {
+  if (n.novo) {
+    const s = document.createElement('span');
+    s.className = 'novo';
+    s.textContent = 'novo';
+    item.querySelector('.meta').appendChild(s);
+  }
+  if (n.relevancia >= notaDestaque) {
     const s = document.createElement('span');
     s.className = 'estrela';
     s.textContent = '⭐ destaque';
@@ -874,8 +918,8 @@ function barraFavoritos() {
 
 // ---------- Lista: filtros, ordenação e agrupamento ----------
 function faixa(n) {
-  if (n.nota >= notaDestaque) return 'Destaques para o time';
-  if (n.nota >= notaValeOlhar) return 'Vale olhar';
+  if (n.relevancia >= notaDestaque) return 'Destaques para o time';
+  if (n.relevancia >= notaValeOlhar) return 'Vale olhar';
   return 'Outros';
 }
 
@@ -899,10 +943,12 @@ function renderizar() {
     visiveis.sort((a, b) => b.salvoEm - a.salvoEm);
     lista.appendChild(barraFavoritos());
   } else {
-    visiveis = noticias.filter(n => (!categoria || (categoria === '*' ? n.nota >= notaDestaque : n.categoria === categoria))
+    const naCategoria = n => !categoria || (categoria === '*' ? n.relevancia >= notaDestaque
+                                          : categoria === 'novo' ? n.novo : n.categoria === categoria);
+    visiveis = noticias.filter(n => naCategoria(n)
                                  && (!fonte || n.fonte === fonte)
                                  && termos.every(t => n.busca.includes(t)));
-    visiveis.sort(porRelevancia ? (a, b) => b.nota - a.nota || b.ts - a.ts : (a, b) => b.ts - a.ts);
+    visiveis.sort(porRelevancia ? (a, b) => b.relevancia - a.relevancia || b.ts - a.ts : (a, b) => b.ts - a.ts);
   }
 
   if (!visiveis.length) {
@@ -1022,13 +1068,14 @@ renderizar();
 
 def gerar_html(noticias: list, erros: list) -> str:
     campos = ("titulo", "titulo_original", "resumo", "link", "imagem", "fonte", "categoria",
-              "nota", "rotulos", "github", "selo", "ts")
+              "nota", "rotulos", "github", "selo", "ts", "visto")
     dados = {
         "noticias": [{c: n[c] for c in campos} for n in noticias],
         "gerado": time.time(),
         "erros": erros,
         "notaDestaque": NOTA_DESTAQUE,
         "notaValeOlhar": NOTA_VALE_OLHAR,
+        "perdaPorDia": PERDA_POR_DIA,
     }
     # "</" escapado para o conteúdo dos feeds nunca fechar a tag <script> antes da hora.
     json_seguro = json.dumps(dados, ensure_ascii=False).replace("</", "<\\/")
